@@ -22,7 +22,9 @@ impl fmt::Display for DosError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooShort { need, got } => write!(f, "need {need} bytes, got {got}"),
-            Self::BadMagic { expected, found } => write!(f, "bad magic: expected {expected}, found 0x{found:04X}"),
+            Self::BadMagic { expected, found } => {
+                write!(f, "bad magic: expected {expected}, found 0x{found:04X}")
+            }
             Self::Malformed(m) => write!(f, "malformed: {m}"),
         }
     }
@@ -74,11 +76,17 @@ pub const MZ_HEADER_SIZE: usize = 64;
 /// Parse an MZ (.EXE) header from raw bytes.
 pub fn parse_mz(data: &[u8]) -> Result<MzHeader, DosError> {
     if data.len() < MZ_HEADER_SIZE {
-        return Err(DosError::TooShort { need: MZ_HEADER_SIZE, got: data.len() });
+        return Err(DosError::TooShort {
+            need: MZ_HEADER_SIZE,
+            got: data.len(),
+        });
     }
     let magic = u16le(data, 0);
     if magic != 0x5A4D {
-        return Err(DosError::BadMagic { expected: "MZ", found: magic });
+        return Err(DosError::BadMagic {
+            expected: "MZ",
+            found: magic,
+        });
     }
     Ok(MzHeader {
         last_page_bytes: u16le(data, 2),
@@ -99,7 +107,11 @@ pub fn parse_mz(data: &[u8]) -> Result<MzHeader, DosError> {
 
 /// Compute total image size in bytes implied by the header.
 pub fn image_size(h: &MzHeader) -> u64 {
-    let last = if h.last_page_bytes == 0 { 512 } else { h.last_page_bytes as u64 };
+    let last = if h.last_page_bytes == 0 {
+        512
+    } else {
+        h.last_page_bytes as u64
+    };
     (h.pages as u64 - 1) * 512 + last
 }
 
@@ -110,12 +122,14 @@ pub fn header_size(h: &MzHeader) -> usize {
 
 /// Determine executable kind from magic bytes.
 pub fn detect_kind(data: &[u8]) -> &'static str {
-    if data.len() < 2 { return "unknown"; }
+    if data.len() < 2 {
+        return "unknown";
+    }
     match u16le(data, 0) {
         0x5A4D => "mz-exe",
-        0x454E => "ne-exe",   // 'NE'
-        0x454C => "le-exe",   // 'LE'
-        0x5843 => "com",      // heuristic: no magic — see below
+        0x454E => "ne-exe", // 'NE'
+        0x454C => "le-exe", // 'LE'
+        0x5843 => "com",    // heuristic: no magic — see below
         _ => {
             // .COM files have no magic; detect by absence of MZ/NE/LE
             "com-or-data"
@@ -129,14 +143,21 @@ mod tests {
 
     fn mz_fixture() -> Vec<u8> {
         let mut b = vec![0u8; MZ_HEADER_SIZE];
-        b[0] = 0x4D; b[1] = 0x5A; // 'MZ'
-        b[2] = 0x00; b[3] = 0x02; // last page 512 → 0 means full page; use 512? spec: 0=full
-        // set realistic values
-        b[4] = 0x02; b[5] = 0x00; // pages = 2
-        b[6] = 0x01; b[7] = 0x00; // reloc_count = 1
-        b[8] = 0x04; b[9] = 0x00; // header_paragraphs = 4 → 64 bytes
-        b[20] = 0x00; b[21] = 0x00; // ip
-        b[22] = 0x00; b[23] = 0x00; // cs
+        b[0] = 0x4D;
+        b[1] = 0x5A; // 'MZ'
+        b[2] = 0x00;
+        b[3] = 0x02; // last page 512 → 0 means full page; use 512? spec: 0=full
+                     // set realistic values
+        b[4] = 0x02;
+        b[5] = 0x00; // pages = 2
+        b[6] = 0x01;
+        b[7] = 0x00; // reloc_count = 1
+        b[8] = 0x04;
+        b[9] = 0x00; // header_paragraphs = 4 → 64 bytes
+        b[20] = 0x00;
+        b[21] = 0x00; // ip
+        b[22] = 0x00;
+        b[23] = 0x00; // cs
         b
     }
 
@@ -158,13 +179,17 @@ mod tests {
 
     #[test]
     fn rejects_short() {
-        assert!(matches!(parse_mz(&[0u8; 10]), Err(DosError::TooShort { .. })));
+        assert!(matches!(
+            parse_mz(&[0u8; 10]),
+            Err(DosError::TooShort { .. })
+        ));
     }
 
     #[test]
     fn rejects_bad_magic() {
         let mut b = vec![0u8; MZ_HEADER_SIZE];
-        b[0] = 0x00; b[1] = 0x00;
+        b[0] = 0x00;
+        b[1] = 0x00;
         assert!(matches!(parse_mz(&b), Err(DosError::BadMagic { .. })));
     }
 
