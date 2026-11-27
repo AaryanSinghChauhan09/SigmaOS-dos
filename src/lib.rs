@@ -106,13 +106,15 @@ pub fn parse_mz(data: &[u8]) -> Result<MzHeader, DosError> {
 }
 
 /// Compute total image size in bytes implied by the header.
+/// A malformed header with `pages == 0` yields just the last-page
+/// size rather than underflowing.
 pub fn image_size(h: &MzHeader) -> u64 {
     let last = if h.last_page_bytes == 0 {
         512
     } else {
         h.last_page_bytes as u64
     };
-    (h.pages as u64 - 1) * 512 + last
+    h.pages.saturating_sub(1) as u64 * 512 + last
 }
 
 /// Header size in bytes.
@@ -197,5 +199,67 @@ mod tests {
     fn detects_kind() {
         assert_eq!(detect_kind(&[0x4D, 0x5A]), "mz-exe");
         assert_eq!(detect_kind(&[0x00, 0x00]), "com-or-data");
+    }
+
+    #[test]
+    fn image_size_last_page_partial() {
+        // pages=3, last_page_bytes=100 -> 2*512+100 = 1124
+        let mut b = mz_fixture();
+        b[2] = 100;
+        b[2 + 1] = 0;
+        b[4] = 3;
+        b[5] = 0;
+        let h = parse_mz(&b).unwrap();
+        assert_eq!(image_size(&h), 1124);
+    }
+
+    #[test]
+    fn image_size_zero_pages_no_underflow() {
+        let mut b = mz_fixture();
+        b[4] = 0;
+        b[5] = 0; // pages = 0 (malformed)
+        let h = parse_mz(&b).unwrap();
+        // last_page_bytes=0x0200=512 -> saturates to 512, no panic
+        assert_eq!(image_size(&h), 512);
+    }
+
+    #[test]
+    fn detect_kind_all_magics() {
+        assert_eq!(detect_kind(&[0x4D, 0x5A]), "mz-exe"); // MZ
+        assert_eq!(detect_kind(&[0x4E, 0x45]), "ne-exe"); // NE
+        assert_eq!(detect_kind(&[0x4C, 0x45]), "le-exe"); // LE
+        assert_eq!(detect_kind(&[0x43, 0x58]), "com"); // CX
+        assert_eq!(detect_kind(&[0x00]), "unknown"); // <2 bytes
+        assert_eq!(detect_kind(&[0x01, 0x02]), "com-or-data");
+    }
+
+    #[test]
+    fn parse_mz_reads_all_fields() {
+        let mut b = mz_fixture();
+        // ss/sp/checksum/ip/cs/reloc_offset/overlay at fixed offsets
+        b[14] = 0x10;
+        b[15] = 0x00; // ss = 16
+        b[16] = 0x20;
+        b[17] = 0x00; // sp = 32
+        b[18] = 0x34;
+        b[19] = 0x12; // checksum
+        b[20] = 0x78;
+        b[21] = 0x56; // ip
+        b[22] = 0xBC;
+        b[23] = 0x9A; // cs
+        b[24] = 0x40;
+        b[25] = 0x00;
+        b[26] = 0x00;
+        b[27] = 0x00; // reloc_offset=64
+        b[28] = 0x07;
+        b[29] = 0x00; // overlay=7
+        let h = parse_mz(&b).unwrap();
+        assert_eq!(h.ss, 16);
+        assert_eq!(h.sp, 32);
+        assert_eq!(h.checksum, 0x1234);
+        assert_eq!(h.ip, 0x5678);
+        assert_eq!(h.cs, 0x9ABC);
+        assert_eq!(h.reloc_offset, 64);
+        assert_eq!(h.overlay, 7);
     }
 }
